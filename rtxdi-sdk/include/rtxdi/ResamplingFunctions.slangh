@@ -1271,7 +1271,7 @@ struct VolumeReSTIR_Parameters
 
 // Note: lightSample and inverseSelectionPdf are only guaranteed to be written out when this function returns true.
 bool VolumeReSTIR_GetLightSample(
-  inout VolumeReSTIR_Reservoir volumeReservoir, RAB_VolumeInteraction volumeInteraction,
+  const VolumeReSTIR_Reservoir volumeReservoir, RAB_VolumeInteraction volumeInteraction,
   out RAB_LightSample lightSample, out float inverseSelectionPdf)
 {
   lightSample = {};
