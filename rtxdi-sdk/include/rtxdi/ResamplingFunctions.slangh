@@ -1382,12 +1382,189 @@ void VolumeReSTIR_SpatialCorrection(
 }
 
 // Note: cachedSelectedLightSample only set if the returned reservoir is valid.
-VolumeReSTIR_Reservoir VolumeReSTIR_SampleLightRIS(
-  inout RAB_RandomSamplerState rng, RAB_VolumeVisibilityContext volumeVisibilityContext, RAB_VolumeInteraction volumeInteraction,
-  out RAB_LightSample cachedSelectedLightSample, VolumeReSTIR_Parameters volumeParameters)
+VolumeReSTIR_Reservoir VolumeReSTIR_SpatialResampling(inout RAB_RandomSamplerState rabRandomState, 
+                                                      const VolumeArgs volumeArgs,
+                                                      const VolumeDefinitionCamera camera,
+                                                      RAB_VolumeVisibilityContext rabVolumeVisibilityContext, 
+                                                      RAB_VolumeInteraction rabVolumeInteraction, 
+                                                      VolumeReSTIR_Reservoir centerVolumeReservoir,
+                                                      Texture3D<uint4> VolumeReservoirs,
+                                                      uint3 froxelDimensions,
+                                                      uint3 froxelIndex,
+                                                      uint3 froxelVolumeOffset,
+                                                      uint numSpatialSamples,
+                                                      float samplingRadius,
+                                                      const bool biasCorrection = false,
+                                                      const bool rtBiasCorrection = false)
 {
-  cachedSelectedLightSample = {};
+  VolumeReSTIR_Reservoir spatialVolumeReservoir = VolumeReSTIR_Reservoir::createEmpty();
+  spatialVolumeReservoir.merge(.5f, centerVolumeReservoir);
+  
+  uint cachedRng = rabRandomState.index;
+  uint selected = 0xFFFFFFFF;
+  for (uint i = 0; i < numSpatialSamples; i++)
+  {
+    // TODO: Use a sphere instead of box?
+    float3 neighbourOffset = float3(RAB_GetNextRandom(rabRandomState), RAB_GetNextRandom(rabRandomState), RAB_GetNextRandom(rabRandomState)) * 2 - 1;
+    int3 neighbourID = clamp(int3(froxelIndex + neighbourOffset * samplingRadius), 0, froxelDimensions - 1);
+    
+    // Load neighbour reservoir
+    VolumeReSTIR_PackedReservoir packedReservoir;
+    packedReservoir.data0 = VolumeReservoirs[neighbourID + froxelVolumeOffset];
+    VolumeReSTIR_Reservoir neighborReservoir = VolumeReSTIR_Reservoir::createFromPacked(packedReservoir);
+    
+    VolumeReSTIR_SpatialCorrection(neighborReservoir, rabVolumeInteraction);
+      
+    if(spatialVolumeReservoir.merge(RAB_GetNextRandom(rabRandomState), neighborReservoir))
+    {
+      selected = i;
+    }
+  }
+  
+  if (spatialVolumeReservoir.isValid())
+  {
+    if (biasCorrection)
+    {
+      rabRandomState.index = cachedRng;
+      // Compute the unbiased normalization term (instead of using 1/M)
+      float pi = spatialVolumeReservoir.lightSample.targetPdf;
+      float piSum = pi * centerVolumeReservoir.sampleCount;
 
+      // To do this, we need to walk our neighbors again
+      for (uint i = 0; i < numSpatialSamples; i++)
+      {
+          float3 neighbourOffset = float3(RAB_GetNextRandom(rabRandomState), RAB_GetNextRandom(rabRandomState), RAB_GetNextRandom(rabRandomState)) * 2 - 1;
+          int3 neighbourID = clamp(int3(froxelIndex + neighbourOffset * samplingRadius), 0, froxelDimensions - 1);
+          rabRandomState.index++;
+
+          const vec3 neighbourFroxelTranslatedWorldPosition = froxelCoordinateToTranslatedWorldPosition(
+            camera.projectionToTranslatedWorld, camera.viewToProjection, packedFlagGet(camera.flags, rightHandedFlag),
+            volumeArgs.restirInverseFroxelGridDimensions, volumeArgs.froxelDepthSlices,
+            volumeArgs.froxelDepthSliceDistributionExponent, volumeArgs.froxelMaxDistance, camera.nearPlane,
+            neighbourID + 0.5.xxx);
+          const vec3 neighbourFroxelWorldPosition = translatedWorldToWorld(camera, neighbourFroxelTranslatedWorldPosition);
+        
+          RAB_VolumeInteraction rabNeighbourVolumeInteraction;
+          rabNeighbourVolumeInteraction.volumeInteraction = volumeInteractionCreate(neighbourFroxelWorldPosition);
+        
+          RAB_LightSample selectedSampleAtNeighbour = RAB_GetLightSample(spatialVolumeReservoir.lightSample.lightIndex, spatialVolumeReservoir.lightSample.lightSampleCoordinates, rabNeighbourVolumeInteraction, /* usePreviousLights = */false);
+        
+          float ps = RAB_GetLightSampleTargetPdfForVolume(selectedSampleAtNeighbour, rabNeighbourVolumeInteraction);
+
+          if (rtBiasCorrection && ps > 0)
+          {
+            // Note: Currently set to the invalid Ray Portal index until we support cross-portal lighting here.
+            uint8_t sampledTransportPortalIndex = RTXDI_INVALID_PORTAL_INDEX;
+            float16_t3 attenuation = float16_t3(0.0f);
+            const bool visible = RAB_VolumeReSTIR_TraceNEEVisibility(selectedSampleAtNeighbour, sampledTransportPortalIndex, rabVolumeVisibilityContext, rabNeighbourVolumeInteraction, attenuation);
+      
+            if (!visible || all(attenuation <= float16_t3(0.0f)))
+            {
+              ps = 0.f;
+            }
+          }
+        
+          VolumeReSTIR_PackedReservoir packedReservoir;
+          packedReservoir.data0 = VolumeReservoirs[neighbourID + froxelVolumeOffset];
+          VolumeReSTIR_Reservoir neighborReservoir = VolumeReSTIR_Reservoir::createFromPacked(packedReservoir);
+
+          // Select this sample for the (normalization) numerator if this particular neighbor pixel
+          //     was the one we selected via RIS in the first loop, above.
+          pi = selected == i ? ps : pi;
+
+          // Add to the sums of weights for the (normalization) denominator
+          piSum += ps * neighborReservoir.sampleCount;
+      }
+
+      // Use "MIS-like" normalization
+      spatialVolumeReservoir.finalizeResampling( pi, piSum);
+    }
+    else
+    {
+      spatialVolumeReservoir.finalizeResampling(1.0f, spatialVolumeReservoir.sampleCount);
+    }
+  }
+  
+  return spatialVolumeReservoir;
+}
+
+// Note: cachedSelectedLightSample only set if the returned reservoir is valid.
+VolumeReSTIR_Reservoir VolumeReSTIR_TemporalResampling(inout RAB_RandomSamplerState rabRandomState, 
+                                                       RAB_VolumeVisibilityContext rabVolumeVisibilityContext, 
+                                                       RAB_VolumeInteraction rabVolumeInteraction, 
+                                                       float3 previousFroxelPosition,
+                                                       float reprojectionConfidencePenalty, 
+                                                       uint maxSampleCount,
+                                                       VolumeReSTIR_Reservoir currentVolumeReservoir, 
+                                                       VolumeReSTIR_Reservoir previousVolumeReservoir,
+                                                       const bool biasCorrection = false,
+                                                       const bool rtBiasCorrection = false)
+{
+  VolumeReSTIR_Reservoir temporalVolumeReservoir = VolumeReSTIR_Reservoir::createEmpty();
+  temporalVolumeReservoir.merge(.5f, currentVolumeReservoir);
+    
+  // Correct the old reservoir for temporal/spatial reprojection effects
+  uint16_t selectedLightPrevIdx = RAB_TranslateLightIndex(currentVolumeReservoir.lightSample.lightIndex, /* currentToPrevious = */true);
+    
+  VolumeReSTIR_TemporalCorrection(previousVolumeReservoir, reprojectionConfidencePenalty, maxSampleCount);
+  VolumeReSTIR_SpatialCorrection(previousVolumeReservoir, rabVolumeInteraction);
+    
+  bool selectedPrevious = temporalVolumeReservoir.merge(RAB_GetNextRandom(rabRandomState), previousVolumeReservoir);
+  
+  if (biasCorrection)
+  {
+    if (selectedPrevious)
+    {
+      selectedLightPrevIdx = RAB_TranslateLightIndex(previousVolumeReservoir.lightSample.lightIndex, /* currentToPrevious = */true);
+    }
+    
+    // Compute the unbiased normalization term (instead of using 1/M)
+    float pi = temporalVolumeReservoir.lightSample.targetPdf;
+    float piSum = pi * currentVolumeReservoir.sampleCount;
+    
+    if (temporalVolumeReservoir.isValid() && selectedLightPrevIdx != RTXDI_INVALID_LIGHT_INDEX && previousVolumeReservoir.sampleCount > 0)
+    {
+      RAB_VolumeInteraction rabPrevVolumeInteraction;
+      rabPrevVolumeInteraction.volumeInteraction = volumeInteractionCreate(previousFroxelPosition);
+        
+      RAB_LightSample rabLightSample;
+      RAB_LightSample selectedSampleAtTemporal = RAB_GetLightSample(selectedLightPrevIdx, temporalVolumeReservoir.lightSample.lightSampleCoordinates, rabPrevVolumeInteraction, /* usePreviousLights = */true);
+        
+      float temporalP = RAB_GetLightSampleTargetPdfForVolume(selectedSampleAtTemporal, rabPrevVolumeInteraction);
+      
+      if (rtBiasCorrection && temporalP > 0)
+      {
+        // Note: Currently set to the invalid Ray Portal index until we support cross-portal lighting here.
+        uint8_t sampledTransportPortalIndex = RTXDI_INVALID_PORTAL_INDEX;
+        float16_t3 attenuation = float16_t3(0.0f);
+        const bool visible = RAB_VolumeReSTIR_TraceNEEVisibility(selectedSampleAtTemporal, sampledTransportPortalIndex, rabVolumeVisibilityContext, rabPrevVolumeInteraction, attenuation);
+      
+        if (!visible || all(attenuation <= float16_t3(0.0f)))
+        {
+          temporalP = 0.f;
+        }
+      }
+      
+      pi = selectedPrevious ? temporalP : pi;
+      piSum += temporalP * previousVolumeReservoir.sampleCount;
+    }
+    
+    // Finalize the resampling process
+    
+    temporalVolumeReservoir.finalizeResampling(pi, piSum);
+  }
+  else
+  {
+    // Finalize the resampling process
+
+    temporalVolumeReservoir.finalizeResampling(1.0f, temporalVolumeReservoir.sampleCount);
+  }
+  return temporalVolumeReservoir;
+}
+
+VolumeReSTIR_Reservoir VolumeReSTIR_SampleLightRIS(
+  inout RAB_RandomSamplerState rng, RAB_VolumeVisibilityContext volumeVisibilityContext, RAB_VolumeInteraction volumeInteraction, VolumeReSTIR_Parameters volumeParameters)
+{
   VolumeReSTIR_Reservoir newReservoir = VolumeReSTIR_Reservoir::createEmpty();
 
   // Early out if there are no lights to sample from
@@ -1443,13 +1620,6 @@ VolumeReSTIR_Reservoir VolumeReSTIR_SampleLightRIS(
 
       const bool updatedSample = newReservoir.streamSample(RAB_GetNextRandom(rng), volumeLightCandidateSample);
 
-      // Note: Should always be true on the first attempt to stream a sample, ensuring the cached light sample
-      // will always be valid if the reservoir is valid.
-      if (updatedSample)
-      {
-        cachedSelectedLightSample = lightSample;
-      }
-
       // Accumulate and wrap the light index
 
       lightIndex += stride;
@@ -1460,32 +1630,11 @@ VolumeReSTIR_Reservoir VolumeReSTIR_SampleLightRIS(
       }
     }
   }
-
+  
   // Finalize the resampling process and reset the sample count
 
   newReservoir.finalizeResampling(1.0f, newReservoir.sampleCount);
   newReservoir.sampleCount = 1;
-
-  // Perform an initial visiblity check
-
-  if (volumeParameters.enableVolumeRISInitialVisibility && newReservoir.isValid())
-  {
-    // Test visibility to the cached light sample for the reservoir
-
-    // Note: Currently set to the invalid Ray Portal index until we support cross-portal lighting here.
-    uint8_t sampledTransportPortalIndex = RTXDI_INVALID_PORTAL_INDEX;
-    float16_t3 attenuation = float16_t3(0.0f);
-    const bool visible = RAB_VolumeReSTIR_TraceNEEVisibility(
-      cachedSelectedLightSample, sampledTransportPortalIndex,
-      volumeVisibilityContext, volumeInteraction, attenuation);
-
-    // Invalidate the reservoir if the visibility test fails
-
-    if (!visible || all(attenuation == float16_t3(0.0f)))
-    {
-      newReservoir.invalidate();
-    }
-  }
-
+  
   return newReservoir;
 }

@@ -247,12 +247,12 @@ void ReSTIRGI_LoadHitGeometry(Texture2D<float4> hitGeometryTexture, int2 pixel, 
 struct VolumeReSTIR_LightSample
 {
   // Note: The index and random sampling coordinates of this light sample.
-  uint16_t lightIndex;
-  float16_t2 lightSampleCoordinates;
+  uint16_t lightIndex = RTXDI_INVALID_LIGHT_INDEX;
+  float16_t2 lightSampleCoordinates = float16_t2(0.f);
   // Note: The PDF of this sample against the target function (usually BRDF, light heuristic weight, visibility, etc), does not
   // need to be a normalized PDF.
   // Cached here for future use (only needed for bias correction, not currently used much right now).
-  float targetPdf;
+  float targetPdf = 0.f;
 
   static VolumeReSTIR_LightSample create(uint16_t lightIndex, float16_t2 lightSampleCoordinates, float targetPdf)
   {
@@ -291,16 +291,22 @@ struct VolumeReSTIR_Reservoir
   // Note: The current selected light sample in the reservoir.
   VolumeReSTIR_LightSample lightSample;
   // Note: The sum of all of the weights in the reservoir.
-  float weightSum;
+  float weightSum = 0;
   // Note: The number of samples making up the reservoir.
-  uint16_t sampleCount;
+  uint sampleCount = 0;
 
+  bool knownVisible = false;
+  
   static VolumeReSTIR_Reservoir createEmpty()
   {
     VolumeReSTIR_Reservoir volumeReservoir;
 
     volumeReservoir.weightSum = invalidWeightSum;
     volumeReservoir.sampleCount = 0;
+    volumeReservoir.knownVisible = false;
+    volumeReservoir.lightSample.lightIndex = RTXDI_INVALID_LIGHT_INDEX;
+    volumeReservoir.lightSample.lightSampleCoordinates = float16_t2(0.f);
+    volumeReservoir.lightSample.targetPdf = 0.f;
 
     return volumeReservoir;
   }
@@ -319,8 +325,9 @@ struct VolumeReSTIR_Reservoir
     VolumeReSTIR_PackedReservoir packed;
 
     packed.data0.x =
-      (uint32_t(lightSample.lightIndex) << 0) |
-      (uint32_t(sampleCount) << 16);
+      (uint32_t(lightSample.lightIndex) & 0xFFFF) |
+      (uint32_t(min(0x7fff, sampleCount)) << 16) |
+      uint32_t(knownVisible ? 0x80000000 : 0);
     packed.data0.y =
       f32tof16(lightSample.lightSampleCoordinates.x) |
       (f32tof16(lightSample.lightSampleCoordinates.y) << 16);
@@ -337,26 +344,30 @@ struct VolumeReSTIR_Reservoir
     lightSample.lightSampleCoordinates.y = f16tof32(packed.data0.y >> 16);
     lightSample.targetPdf = asfloat(packed.data0.z);
     weightSum = asfloat(packed.data0.w);
-    sampleCount = uint16_t(packed.data0.x >> 16);
+    sampleCount = uint16_t(packed.data0.x >> 16) & 0x7fff;
+    knownVisible = (packed.data0.x & 0x80000000) != 0;
   }
 
   bool isValid()
   {
-    return weightSum != invalidWeightSum;
+    return weightSum != invalidWeightSum && lightSample.lightIndex != RTXDI_INVALID_LIGHT_INDEX;
   }
 
   [mutating] void invalidate()
   {
     weightSum = invalidWeightSum;
+    lightSample.lightIndex = RTXDI_INVALID_LIGHT_INDEX;
+    knownVisible = false;
   }
 
-  [mutating] bool update(float random, float weight, uint16_t newSampleCount, VolumeReSTIR_LightSample newLightSample)
+  [mutating] bool update(float random, float weight, uint newSampleCount, VolumeReSTIR_LightSample newLightSample, bool newKnownVisible)
   {
     // Accumulate weight
 
     weightSum += weight;
-    // Note: Clamp the sample count to the maximum uint 16 value when adding to prevent wrapping back around to 0.
-    sampleCount = uint16_t(min(uint(sampleCount) + uint(newSampleCount), 0xFFFF));
+    
+    // Note: Clamp the sample count to the maximum uint 16 value (save a bit) when adding to prevent wrapping back around to 0.
+    sampleCount = uint16_t(min(uint(sampleCount) + uint(newSampleCount), 0x7fff));
 
     // Update sample
 
@@ -364,7 +375,8 @@ struct VolumeReSTIR_Reservoir
     if (weightSum * random < weight)
     {
       lightSample = newLightSample;
-
+      knownVisible = newKnownVisible;
+      
       return true;
     }
 
@@ -376,7 +388,7 @@ struct VolumeReSTIR_Reservoir
     const float weight =
       candidateSample.lightSample.targetPdf * candidateSample.inverseSourcePdf;
 
-    return update(random, weight, 1, candidateSample.lightSample);
+    return update(random, weight, 1, candidateSample.lightSample, false);
   }
 
   [mutating] bool merge(float random, VolumeReSTIR_Reservoir otherVolumeReservoir)
@@ -384,7 +396,7 @@ struct VolumeReSTIR_Reservoir
     const float weight =
       otherVolumeReservoir.lightSample.targetPdf * otherVolumeReservoir.weightSum * otherVolumeReservoir.sampleCount;
 
-    return update(random, weight, otherVolumeReservoir.sampleCount, otherVolumeReservoir.lightSample);
+    return update(random, weight, otherVolumeReservoir.sampleCount, otherVolumeReservoir.lightSample, otherVolumeReservoir.knownVisible);
   }
 
   [mutating] void finalizeResampling(float normalizationNumerator, float normalizationDenominator)
