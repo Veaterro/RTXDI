@@ -613,7 +613,9 @@ RTXDI_Reservoir RTXDI_SpatialResampling(
       validNeighborMask |= (0x1 << i);
     }
 
-    if (sparams.biasCorrectionMode >= RTXDI_BIAS_CORRECTION_BASIC)
+    // Note: State reservoir may be empty still if no valid samples were found (and if the initial center sample was also invalid), so it must
+    // be checked to be valid before doing bias correction operations on it (as some of these assume the reservoir is valid).
+    if (sparams.biasCorrectionMode >= RTXDI_BIAS_CORRECTION_BASIC && RTXDI_IsValidReservoir(state))
     {
       float pi = state.targetPdf;
       float piSum = state.targetPdf * centerSample.M;
