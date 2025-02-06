@@ -1,18 +1,18 @@
 [submodule "donut"]
-	path = donut
-	url = https://github.com/NVIDIAGameWorks/donut.git
+	path = External/donut
+	url = https://github.com/NVIDIA-RTX/Donut.git
 [submodule "NRD"]
-	path = NRD
-	url = https://github.com/NVIDIAGameWorks/RayTracingDenoiser.git
+	path = External/NRD
+	url = https://github.com/NVIDIA-RTX/NRD.git
 [submodule "DLSS"]
-	path = DLSS
+	path = External/DLSS
 	url = https://github.com/NVIDIA/DLSS.git
 [submodule "rtxdi-runtime"]
-	path = rtxdi-runtime
-	url = https://github.com/NVIDIAGameWorks/rtxdi-runtime.git
-[submodule "rtxdi-assets"]
-	path = rtxdi-assets
-	url = https://github.com/NVIDIAGameWorks/rtxdi-assets.git
+	path = Libraries/Rtxdi
+	url = https://github.com/NVIDIA-RTX/RTXDI-Library.git
 [submodule "thirdparty/cxxopts"]
-	path = thirdparty/cxxopts
+	path = External/cxxopts
 	url = https://github.com/jarro2783/cxxopts.git
+[submodule "Assets/Media"]
+	path = Assets/Media
+	url = https://github.com/NVIDIA-RTX/RTXDI-Assets.git

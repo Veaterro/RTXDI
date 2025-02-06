@@ -60,13 +60,13 @@ endfunction()
 
 # Download DXC
 if (WIN32)
-	CheckAndDownloadPackage("DXC" "v1.7.2212.1" ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.7.2212.1/dxc_2023_03_01.zip)
-	set(REDIST_DXC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/x64/dxc.exe")
+	CheckAndDownloadPackage("DXC" "v1.7.2212.1" ${CMAKE_CURRENT_SOURCE_DIR}/External/dxc https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.7.2212.1/dxc_2023_03_01.zip)
+	set(REDIST_DXC "${CMAKE_CURRENT_SOURCE_DIR}/External/dxc/bin/x64/dxc.exe")
 else()
-	CheckAndDownloadPackage("DXC" "v1.7.2212.1" ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.7.2212.1/linux_dxc_2023_03_01.x86_64.tar.gz)
+	CheckAndDownloadPackage("DXC" "v1.7.2212.1" ${CMAKE_CURRENT_SOURCE_DIR}/External/dxc https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.7.2212.1/linux_dxc_2023_03_01.x86_64.tar.gz)
 	# Add execute permissions
-	file(CHMOD ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/dxc PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
-	set(REDIST_DXC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/dxc")
+	file(CHMOD ${CMAKE_CURRENT_SOURCE_DIR}/External/dxc/bin/dxc PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+	set(REDIST_DXC "${CMAKE_CURRENT_SOURCE_DIR}/External/dxc/bin/dxc")
 endif()
 if (EXISTS "${REDIST_DXC}")
 	if (WIN32 AND NOT DXC_PATH)
@@ -89,14 +89,21 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 set(DONUT_SHADERS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/shaders/framework")
 
-add_subdirectory(donut)
-set(DONUT_PATH "${CMAKE_CURRENT_LIST_DIR}/donut")
+# Put the ShaderMake binary with the other build outputs
+set(SHADERMAKE_BIN_OUTPUT_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}" CACHE STRING "")
 
-include(NRD.cmake)
-include(DLSS.cmake)
-include(rtxdi-runtime.cmake)
+add_subdirectory(External/donut)
+set(DONUT_PATH "${CMAKE_CURRENT_LIST_DIR}/External/donut")
 
-set(RTXDI_RUNTIME_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/rtxdi-runtime/include")
+include(External/NRD.cmake)
+include(External/DLSS.cmake)
+
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/Libraries/Rtxdi/CMakeLists.txt")
+
+    add_subdirectory(Libraries/Rtxdi)
+    set(RTXDI_RUNTIME_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Libraries/Rtxdi/Include")
+
+endif()
 
 set(GLSLANG_PATH "" CACHE STRING "Path to glslangValidator for GLSL header verification (optional)")
 
@@ -104,15 +111,15 @@ if (NOT TARGET cxxopts)
 	option(CXXOPTS_BUILD_EXAMPLES OFF)
 	option(CXXOPTS_BUILD_TESTS OFF)
 	option(CXXOPTS_ENABLE_INSTALL OFF)
-	add_subdirectory(thirdparty/cxxopts)
+	add_subdirectory(External/cxxopts)
 endif()
 
-add_subdirectory(shaders)
-add_subdirectory(src)
-add_subdirectory(minimal/src)
-add_subdirectory(minimal/shaders)
-add_subdirectory(rtxdi-runtime-shader-tests)
+add_subdirectory(Samples/FullSample/Shaders)
+add_subdirectory(Samples/FullSample/Source)
+add_subdirectory(Samples/MinimalSample/Shaders)
+add_subdirectory(Samples/MinimalSample/Source)
+add_subdirectory(Support/Tests/RtxdiRuntimeShaderTests)
 
 if (MSVC)
-	set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT rtxdi-sample)
+	set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT FullSample)
 endif()

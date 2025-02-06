@@ -1,7 +1,7 @@
 
 # RTXDI SDK and Sample Applications
 
-Version 2.2.0.
+Version 2.3.0.
 
 [Change Log](ChangeLog.md)
 
@@ -15,31 +15,30 @@ For more information about RTXDI, see the [NVIDIA Developer Page](https://develo
 
 ## Package Contents
 
-[`rtxdi-runtime`](https://github.com/NVIDIAGameWorks/rtxdi-runtime) is a submodule that contains the integrable runtime sources that are meant to be included in the application build:
+[`Libraries/Rtxdi`](https://github.com/NVIDIAGameWorks/rtxdi-runtime) is a submodule that contains the integrable runtime sources that are meant to be included in the application build:
 
-- [`rtxdi-runtime/include/rtxdi`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/include/rtxdi) has the include files, both for host code and for shaders
-- [`rtxdi-runtime/include/rtxdi/DIResamplingFunctions.hlsli`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/include/rtxdi/DIResamplingFunctions.hlsli) and [`rtxdi-runtime/include/rtxdi/GIResamplingFunctions.hlsli`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/include/rtxdi/GIResamplingFunctions.hlsli) are the main shader includes that contain the resampling implementations
-- [`rtxdi-runtime/src`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/src) has the host code with various utility functions for setting up the parameters and resources for resampling
+- [`Rtxdi/Include/Rtxdi`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/include/rtxdi) has the include files, both for host code and for shaders.
+- [`Rtxdi/Include/Rtxdi/DI/`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/Include/Rtxdi/DI/) and [`Rtxdi/Include/Rtxdi/GI/`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/Include/Rtxdi/GI/) are the main shader include folders that contain the resampling implementations for their respective algorithms.
+- [`Rtxdi/Source`](https://github.com/NVIDIAGameWorks/rtxdi-runtime/tree/main/Source) has the host code with various utility functions for setting up the parameters and resources for resampling.
 
-[`src`](src) contains the sample application host code.
+[`Samples`](Samples) contains two sample projects, [`MinimalSample`](Samples/MinimalSample) and [`FullSample`](Samples/FullSample). The [`MinimalSample/Source`](Samples/MinimalSample/Source) project implements ReSTIR DI in a single combined pass to show a minimum viable implementation. The [`FullSample/Source`](Samples/FullSample/Source) project implements ReSTIR DI in several passes integrated into a broader rendering pipeline to show a more standard implementation. The shaders for each project live in their respective [`MinimalSample/Shaders`](Samples/MinimalSample/Shaders) and [`FullSample/Shaders`](Samples/FullSample/Shaders) folders.
 
-[`shaders`](shaders) contains the sample application shaders.
+[`External`](External) contains project dependencies both from Nvidia and third parties:
 
-[`donut`](donut) is a submodule structure with the ["Donut" rendering framework](https://github.com/NVIDIAGameWorks/donut) used to build the sample apps.
+- [`External/donut`](External/donut) is a Git submodule structure with the ["Donut" rendering framework](https://github.com/NVIDIAGameWorks/donut) used to build the sample apps.
 
-[`NRD`](NRD) is a submodule with the ["NRD" denoiser library](https://github.com/NVIDIAGameWorks/RayTracingDenoiser).
+- [`External/NRD`](External/NRD) is a Git submodule with the ["NRD" denoiser library](https://github.com/NVIDIAGameWorks/RayTracingDenoiser).
 
-[`DLSS`](DLSS) is a submodule with the [Deep Learning Super-Sampling SDK](https://github.com/NVIDIA/DLSS).
+- [`External/DLSS`](External/DLSS) is a Git submodule with the [Deep Learning Super-Sampling SDK](https://github.com/NVIDIA/DLSS).
 
-[`rtxdi-assets`](https://github.com/NVIDIAGameWorks/rtxdi-assets) is a submodule containing the [RTXDI SDK Sample Assets](https://github.com/NVIDIAGameWorks/rtxdi-assets).
+- `External/dxc` is a recent version of DirectX Shader Compiler. However, unlike the other dependencies, it is not a Git submodule but is instead fetched by CMake at project configuration time.
 
-Additional content delivered during CMake configuration:
+[`Assets/Media`](https://github.com/NVIDIAGameWorks/rtxdi-assets) is a Git submodule containing the [RTXDI SDK Sample Assets](https://github.com/NVIDIAGameWorks/rtxdi-assets).
 
-`thirdparty/dxc` is a recent version of DirectX Shader Compiler.
 
 ## Building and Running the Sample Apps
 
-**Note** that because the [`rtxdi-assets`](https://github.com/NVIDIAGameWorks/rtxdi-assets) submodule uses LFS. Cloning it without [LFS](https://git-lfs.com) installed will result in files containing LFS pointers instead of the actual assets.
+**Note** that because the [`rtxdi-assets`](https://github.com/NVIDIAGameWorks/rtxdi-assets) submodule that is cloned into `Assets/Media` uses LFS, cloning it without [LFS](https://git-lfs.com) installed will result in files containing LFS pointers instead of the actual assets.
 
 ### Windows
 
@@ -64,7 +63,7 @@ Additional content delivered during CMake configuration:
 
 7. Build the solution with Visual Studio 
 
-8. Run the `rtxdi-sample` or `minimal-sample` projects.
+8. Run the `FullSample` or `MinimalSample` projects.
 
 ### Linux
 
@@ -91,7 +90,7 @@ Additional content delivered during CMake configuration:
 	- `make -j8` (example for an 8-core CPU, or use [Ninja](https://ninja-build.org) instead)
 
 7. Run:
-	- `bin/rtxdi-sample` or `bin/minimal-sample`
+	- `bin/FullSample` or `bin/MinimalSample`
 
 ### Vulkan support
 
