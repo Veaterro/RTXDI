@@ -3,7 +3,7 @@
 
 The application must implement a number of structures and functions on the shader side that are necessary for the RTXDI resampling functions to operate. These structures and functions must be declared before including the main RTXDI header files.
 
-A reference implementation of the bridge functions and structures with support for multiple light types and fractional visibility (translucency) can be found in [`RtxdiApplicationBridge.hlsli`](../shaders/LightingPasses/RtxdiApplicationBridge/RtxdiApplicationBridge.hlsli). This implementation uses some functionality defined in other header files, most notably, polymorphic lights are implemented in [`PolymorphicLight.hlsli`](../shaders/PolymorphicLight.hlsli). The main application bridge file is itself a list of includes of other files, each of which handles a specific piece of the implementation.
+A reference implementation of the bridge functions and structures with support for multiple light types and fractional visibility (translucency) can be found in [`RtxdiApplicationBridge.hlsli`](../Samples/FullSample/Shaders/LightingPasses/RtxdiApplicationBridge/RtxdiApplicationBridge.hlsli). This implementation uses some functionality defined in other header files, most notably, polymorphic lights are implemented in [`PolymorphicLight.hlsli`](../Samples/FullSample/Shaders/PolymorphicLight.hlsli). The main application bridge file is itself a list of includes of other files, each of which handles a specific piece of the implementation.
 
 Below is a list of structures and functions that need to be implemented by the application, by category.
 
@@ -33,7 +33,7 @@ Ultimately, `RAB_LightInfo` instances are consumed by the `RAB_SamplePolymorphic
 
 Represents a point on a light and its radiance, weighted relative to the surface that was used to generate the sample. Light samples are produced by the `RAB_SamplePolymorphicLight` function which takes a `RAB_LightInfo`, a `RAB_Surface`, and a pair of random numbers. Internally, the instances of `RAB_LightSample` are only used to compute the target PDF through `RAB_GetLightSampleTargetPdfForSurface` and are not stored anywhere. Light samples that are stored and reused by ReSTIR are stored as sample references, or instances of `RTXDI_LightSampleRef` structure that only stores the light index and the random numbers. Then the actual position on the lights are re-calculated for each surface they are weighed against.
 
-The application can use the same `RAB_LightSample` instances to compute final shading, as shown in [`ShadingHelpers.hlsli`](../shaders/LightingPasses/ShadingHelpers.hlsli).
+The application can use the same `RAB_LightSample` instances to compute final shading, as shown in [`ShadingHelpers.hlsli`](../Samples/FullSample/Shaders/LightingPasses/ShadingHelpers.hlsli).
 
 ### `RAB_RandomSamplerState`
 
