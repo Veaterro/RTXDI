@@ -1,0 +1,259 @@
+/***************************************************************************
+ # Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ #
+ # NVIDIA CORPORATION and its licensors retain all intellectual property
+ # and proprietary rights in and to this software, related documentation
+ # and any modifications thereto.  Any use, reproduction, disclosure or
+ # distribution of this software and related documentation without an express
+ # license agreement from NVIDIA CORPORATION is strictly prohibited.
+ **************************************************************************/
+
+#pragma once
+
+#include "rtx/utility/froxel.slangh"
+#include "rtx/utility/color.slangh"
+#include "rtx/utility/noise.slangh"
+#include "rtx/utility/procedural_noise.slangh"
+#include "rtx/utility/intersection_helpers.slangh"
+#include "rtx/concept/camera/camera.slangh"
+#include "rtx/concept/ray/ray.h"
+#include "rtx/concept/surface/surface.h"
+#include "rtx/concept/ray_portal/ray_portal.slangh"
+#include "rtx/concept/light/spherical_harmonics.slangh"
+#include "rtx/pass/volume_args.h"
+
+uint portalSpaceToVolumeHint(PortalSpace2BitsType portalSpace)
+{
+  switch (uint(portalSpace))
+  {
+    case PORTAL_SPACE_PORTAL_0: return froxelVolumePortal0;
+    case PORTAL_SPACE_PORTAL_1: return froxelVolumePortal1;
+    default: return froxelVolumeMain;
+  }
+}
+
+// Evaluates the attenuation through a given distance of the global volumetric medium.
+float3 evalVolumetricAttenuation(const VolumeArgs volumeArgs, bool hasHit, float hitDistance, const float3 origin, const float3 direction)
+{
+  // Check if the global volumetrics are enabled
+  // Note: This ensures light is not attenuated by the global volumetric medium when it's not desired.
+
+  if (!volumeArgs.enable)
+  {
+    return float3(1.0f, 1.0f, 1.0f);
+  }
+
+  // Calculate the global volumetric attenuation
+
+  return calcAtmosphereAttenuation(volumeArgs, !hasHit, hitDistance, origin, direction);
+}
+
+bool isInAtmosphere(const VolumeArgs volumeArgs, const float3 position)
+{
+  float3 relPos = volumeArgs.planetCenter - position;
+  return dot(relPos, relPos) <= (volumeArgs.atmosphereRadius * volumeArgs.atmosphereRadius);
+}
+
+// Calculate the percentage of a line segment below an axis-aligned plane
+float evalAtmosphericDensityBetween(const VolumeArgs volumeArgs, const float3 p1, const float3 p2)
+{
+  if(!volumeArgs.enableAtmosphere)
+  {
+    return 1.f;
+  }
+  
+  return lineSegmentSphereIntersectionPercentage(p1, p2, volumeArgs.planetCenter, volumeArgs.atmosphereRadius);
+}
+
+float3 calcAtmosphereAttenuation(const VolumeArgs volumeArgs, const bool infinitelyDistant, const float hitT, const float3 origin, const float3 direction)
+{
+  float attenuationT;
+  
+  if(!volumeArgs.enableAtmosphere)
+  {
+    attenuationT = infinitelyDistant ? volumeArgs.maxAttenuationDistanceForNoAtmosphere : min(volumeArgs.maxAttenuationDistanceForNoAtmosphere, hitT);
+    return evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient, attenuationT);
+  }
+
+  float atmosphereEntryHitT, atmosphereExitHitT;
+  raySphereIntersect(origin, direction, volumeArgs.planetCenter,  volumeArgs.atmosphereRadius, atmosphereEntryHitT, atmosphereExitHitT);
+  
+  const bool inAtmosphere = atmosphereExitHitT >= 0.f && atmosphereEntryHitT < 0.f;
+  const bool noAtmosphere = atmosphereEntryHitT < 0.f && atmosphereExitHitT < 0.f;
+
+  if (inAtmosphere)
+  {
+    // Handle rays pointing up out of the atmosphere from below
+
+    if (infinitelyDistant)
+    {
+      // Note: Hit T does not mean anything meaningful for infinitely distant lights (typically just float
+      // max), though this could take the same code path as normal lights and likely work fine if performance
+      // is needed.
+      attenuationT = atmosphereExitHitT;
+    }
+    else
+    {
+      attenuationT = min(atmosphereExitHitT, hitT);
+    }
+  }
+  else
+  {
+    if (noAtmosphere)
+    {
+      // Handle rays pointing up away from the atmosphere from above
+
+      return float3(1.0f, 1.0f, 1.0f);
+    }
+    else
+    {
+      // Handle rays pointing down into the atmosphere from above
+
+      if (infinitelyDistant)
+      {
+        attenuationT = atmosphereExitHitT - atmosphereEntryHitT;
+      }
+      else
+      {
+        // Note: Attenuation only affects the portion of the ray which actually is penetrating into the atmosphere
+        // from above
+        if (hitT > atmosphereEntryHitT)
+        {
+          attenuationT = min(hitT, atmosphereExitHitT) - atmosphereEntryHitT;
+        }
+        else
+        {
+          return float3(1.0f, 1.0f, 1.0f);
+        }
+      }
+    }
+  }
+
+  return evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient, attenuationT);
+}
+
+float sampleDensityField(const VolumeArgs volumeArgs, float3 from, float3 to, float distance, const float timeMS)
+{
+  const float atmosphericDensity = evalAtmosphericDensityBetween(volumeArgs, from, to);
+  
+  if(cb.volumeArgs.enableNoiseFieldDensity)
+  {
+    const bool testSphere = false;
+    if(testSphere)
+    {
+      const float3 spherePos = float3(0, -2, 0);
+      const float sphereRadius = 20.f;
+
+      return lineSegmentSphereIntersectionPercentage(from, to, spherePos, sphereRadius) * atmosphericDensity * volumeArgs.noiseFieldDensityScale;
+    }
+    else
+    {
+      // Clamped to prevent sever performance clif
+      const uint numSubSteps = clamp(distance / volumeArgs.noiseFieldSubStepSize, 1, 10);
+      const float3 posStep = (to - from) / numSubSteps;
+      float3 pos = from;
+      float stepSize = distance / numSubSteps;
+      float density = 0.f;
+    
+      for (uint i = 0; i < numSubSteps; i++)
+      {
+        pos += posStep;
+        density += saturate(abs(fractalBrownianValueNoise4D(pos * volumeArgs.noiseFieldSpatialFrequency, timeMS * 0.005f, volumeArgs.noiseFieldOctaves)) + 0.05f);
+      }
+  
+      density /= numSubSteps;
+  
+      return saturate(density * volumeArgs.noiseFieldDensityScale) * atmosphericDensity;
+    }
+  }
+  else
+  {
+    return atmosphericDensity;
+  }
+}
+
+// Size of voxel jitter in texel space (in the XY plane only)
+float2 calculateVolumeSamplingJitterRadius(VolumeArgs volumeArgs, float size)
+{
+  return volumeArgs.inverseFroxelGridDimensions.xy * size;
+}
+
+#ifndef VOLUME_LIGHTING_NO_JITTER
+
+static RNG volumeSamplingRng = createRngAnywhere(cb.frameIdx, 0);
+
+void setVolumeSamplingRngSeed(uint seed)
+{
+  volumeSamplingRng.seed += seed;
+}
+
+float3 calculateJitteredFroxelUvw(VolumeArgs volumeArgs, float3 froxelUvw, float size = 5.f)
+{
+    float2 jitter = float2(getNextSampleBlueNoise(volumeSamplingRng), getNextSampleBlueNoise(volumeSamplingRng)) - 0.5f;
+    froxelUvw.xy += jitter * calculateVolumeSamplingJitterRadius(volumeArgs, size);
+    return saturate(froxelUvw);
+}
+
+#endif
+
+// Note: #ifdef disables this function so that this header can be used in composite.comp.slang,
+// which doesn't have RaytraceArgs - and the function uses cb. directly for performance.
+#ifndef VOLUME_LIGHTING_NO_NEE
+// Evaluates direct volumetric lighting at a specified Surface Interaction. Assumes the surface interaction provided
+// was generated with respect to some sort of camera-centric ray casts such that matrix jittering (from DLSS or TAA) affects it.
+vec3 evalVolumetricNEE(
+  Sampler3D<float4> volumeFilteredRadianceY, Sampler3D<float2> volumeFilteredRadianceCoCg, VolumeArgs volumeArgs,
+  MinimalSurfaceInteraction surfaceInteraction, f16vec3 direction,
+  uint froxelVolumeHint = 0, bool phaseFunction = false, float anisotropy = 0.f)
+{
+  if (froxelVolumeHint >= volumeArgs.numActiveFroxelVolumes)
+    froxelVolumeHint = froxelVolumeMain;
+
+  bool volumeFound = false;
+  vec3 physicalFroxelUVW;
+
+  for (uint i = 0; i < volumeArgs.numActiveFroxelVolumes; ++i)
+  {
+    const uint froxelVolume = (i + froxelVolumeHint) % volumeArgs.numActiveFroxelVolumes;
+
+    // Note: use the CB directly because indexing the camera array that is passed through parameters is extremely slow.
+    const VolumeDefinitionCamera camera = cb.volumeArgs.cameras[froxelVolume];
+
+    const vec3 translatedWorldPosition = worldToTranslatedWorld(camera, surfaceInteraction.position);
+    // Note: Lookup lighting at the specified position in the volume radiance cache by calculating its UVW coordinates. Jittered matrix used
+    // here due to Surface Interaction assumptions stated in function documentation.
+    vec3 virtualFroxelUVW = translatedWorldPositionToFroxelUVW(
+      camera.translatedWorldToView, camera.translatedWorldToProjectionJittered, packedFlagGet(camera.flags, rightHandedFlag),
+      volumeArgs.froxelDepthSlices, volumeArgs.froxelDepthSliceDistributionExponent, volumeArgs.froxelMaxDistance, camera.nearPlane,
+      translatedWorldPosition);
+
+  #ifndef VOLUME_LIGHTING_NO_JITTER
+    virtualFroxelUVW = calculateJitteredFroxelUvw(volumeArgs, virtualFroxelUVW);
+  #endif
+    
+    if (all(virtualFroxelUVW > 0.0f) && all(virtualFroxelUVW < 1.0f))
+    {
+      physicalFroxelUVW = virtualFroxelUVWToPhysicalFroxelUVW(
+        virtualFroxelUVW, froxelVolume,
+        volumeArgs.minFilteredRadianceU, volumeArgs.maxFilteredRadianceU, volumeArgs.inverseNumFroxelVolumes);
+      volumeFound = true;
+
+      break;
+    }
+  }
+
+  if (!volumeFound)
+    return 0.0;
+
+  SphericalHarmonic sh = HarmonicsHelpers::loadFiltered3D<SphericalHarmonic>(volumeFilteredRadianceY, volumeFilteredRadianceCoCg, physicalFroxelUVW);
+  sh.hanningFilter(0.7f); // This was determined experimentally by looking at scenes with lots of geometry and sharp light shafts and tuning until ringing was minimized
+  if(phaseFunction)
+  {
+    return sh.evaluateHenyeyGreenstein(direction, anisotropy);
+  }
+  else
+  {
+    return sh.getIrradiance();
+  }
+}
+#endif
