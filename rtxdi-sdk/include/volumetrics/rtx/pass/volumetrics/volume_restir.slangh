@@ -85,7 +85,7 @@ bool spatialVisibilityReuse(const VolumeArgs volumeArgs, int3 start, int3 end, u
     }
   }
     
-  return true; // Line drawn successfully
+  return false; // Reached the edge and nothing has been found
 }
 
 // Ray-frustum intersection function assuming origin is inside the frustum
@@ -111,7 +111,7 @@ float rayFrustumIntersection(const VolumeDefinitionCamera camera, float3 origin,
 
 void VolumeReSTIR_SpatialVisibilityReuse(const VolumeArgs volumeArgs, const VolumeDefinitionCamera camera, const RAB_VolumeInteraction rabVolumeInteraction, float3 froxelCoordinate, inout VolumeReSTIR_Reservoir currentVolumeReservoir)
 {
-  if(!volumeArgs.enablevisibilityReuse || currentVolumeReservoir.knownVisible)
+  if(!volumeArgs.enablevisibilityReuse || currentVolumeReservoir.knownVisible || !currentVolumeReservoir.isValid())
     return;
     
   const vec3 froxelTranslatedWorldPosition = froxelCoordinateToTranslatedWorldPosition(
