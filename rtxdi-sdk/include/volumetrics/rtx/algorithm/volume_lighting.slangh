@@ -135,41 +135,40 @@ float3 calcAtmosphereAttenuation(const VolumeArgs volumeArgs, const bool infinit
 float sampleDensityField(const VolumeArgs volumeArgs, float3 from, float3 to, float distance, const float timeMS)
 {
   const float atmosphericDensity = evalAtmosphericDensityBetween(volumeArgs, from, to);
-  
-  if(cb.volumeArgs.enableNoiseFieldDensity)
-  {
-    const bool testSphere = false;
-    if(testSphere)
-    {
-      const float3 spherePos = float3(0, -2, 0);
-      const float sphereRadius = 20.f;
 
-      return lineSegmentSphereIntersectionPercentage(from, to, spherePos, sphereRadius) * atmosphericDensity * volumeArgs.noiseFieldDensityScale;
-    }
-    else
-    {
-      // Clamped to prevent sever performance clif
-      const uint numSubSteps = clamp(distance / volumeArgs.noiseFieldSubStepSize, 1, 10);
-      const float3 posStep = (to - from) / numSubSteps;
-      float3 pos = from;
-      float stepSize = distance / numSubSteps;
-      float density = 0.f;
-    
-      for (uint i = 0; i < numSubSteps; i++)
-      {
-        pos += posStep;
-        density += saturate(abs(fractalBrownianValueNoise4D(pos * volumeArgs.noiseFieldSpatialFrequency, timeMS * 0.005f, volumeArgs.noiseFieldOctaves)) + 0.05f);
-      }
-  
-      density /= numSubSteps;
-  
-      return saturate(density * volumeArgs.noiseFieldDensityScale) * atmosphericDensity;
-    }
-  }
-  else
+  if (!cb.volumeArgs.enableNoiseFieldDensity)
   {
     return atmosphericDensity;
   }
+
+  // Clamped to prevent severe performance cliff
+  const uint numSubSteps = clamp(distance / volumeArgs.noiseFieldSubStepSize, 1, 10);
+  const float3 posStep = (to - from) / numSubSteps;
+  float3 pos = from;
+  // Note: when volumeArgs.noiseFieldTimeScale is 0, this will set the time to a constant 0 which
+  // will effectively disable temporal modulation of the noise, which is intended.
+  const float time = (timeMS / 1000.0f) * volumeArgs.noiseFieldTimeScale;
+  float stepSize = distance / numSubSteps;
+  float density = 0.f;
+
+  for (uint i = 0; i < numSubSteps; i++)
+  {
+    const float noiseResult = fractalBrownianNoise<4, ValueNoiseSource<true>>(
+      float4(pos, time),
+      volumeArgs.noiseFieldOctaves,
+      volumeArgs.noiseFieldInitialFrequency,
+      volumeArgs.noiseFieldLacunarity,
+      volumeArgs.noiseFieldGain,
+      true
+    );
+
+    pos += posStep;
+    density += saturate(noiseResult);
+  }
+
+  density /= numSubSteps;
+
+  return saturate(density * volumeArgs.noiseFieldDensityScale) * atmosphericDensity;
 }
 
 // Size of voxel jitter in texel space (in the XY plane only)
@@ -180,7 +179,7 @@ float2 calculateVolumeSamplingJitterRadius(VolumeArgs volumeArgs, float size)
 
 #ifndef VOLUME_LIGHTING_NO_JITTER
 
-static RNG volumeSamplingRng = createRngAnywhere(cb.frameIdx, 0);
+static RNG volumeSamplingRng = createRNGAnywhere(cb.frameIdx, 0);
 
 void setVolumeSamplingRngSeed(uint seed)
 {

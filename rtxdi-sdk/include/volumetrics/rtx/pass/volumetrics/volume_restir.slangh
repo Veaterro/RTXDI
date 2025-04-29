@@ -292,7 +292,7 @@ void volume_restir_pass(ivec3 threadIndex)
   uvec3 previousFroxelIndex = froxelCoordinateToFroxelIndex(previousFroxelLookup.coordinate);
   
   // Permutation sampling randomizes the previous reservoir buffer
-  RTXDI_ApplyPermutationSampling(previousFroxelIndex.xy, hashJenkins(cb.frameIdx), 2);
+  RTXDI_ApplyPermutationSampling(previousFroxelIndex.xy, uintHash(cb.frameIdx), 2);
   previousFroxelIndex.xy = clamp(previousFroxelIndex.xy, 0, froxelDimensions.xy-1);
   
   // Readjust coordinate after permutation sampling applies
