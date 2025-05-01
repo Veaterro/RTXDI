@@ -149,26 +149,40 @@ float sampleDensityField(const VolumeArgs volumeArgs, float3 from, float3 to, fl
   // will effectively disable temporal modulation of the noise, which is intended.
   const float time = (timeMS / 1000.0f) * volumeArgs.noiseFieldTimeScale;
   float stepSize = distance / numSubSteps;
-  float density = 0.f;
+  float noiseSum = 0.f;
 
   for (uint i = 0; i < numSubSteps; i++)
   {
-    const float noiseResult = fractalBrownianNoise<4, ValueNoiseSource<true>>(
+    // Warning: Do not use turbulent fractal noise here (indicated currently by a boolean parameter). For some reason aliasing patterns
+    // in the resulting volumetric noise field are created when raymarching due to the way turbulent fractal noise converts snorm noise
+    // values to unorms via an absolute value operation. The reason for this is unclear, but it may be due to the "sharp" corner of the
+    // absolute value function causing some sort of issues (perhaps using a smoother U-shaped function would solve this in the future).
+    // Additionally, these noise patterns appear mainly with trilinearly filtered noise, when using tricubic filtering the turbulent
+    // noise function may be used without such artifacts being as obvious, but tricubic filtering is prohibitively expensive due to
+    // requiring 8x more sample taps and is simply not viable to use within the already fairly expensive per-pixel raymarching process
+    // this function is called from.
+    const float noiseResult = fractalBrownianNoise<4, ValueNoiseSource<false>>(
       float4(pos, time),
       volumeArgs.noiseFieldOctaves,
       volumeArgs.noiseFieldInitialFrequency,
       volumeArgs.noiseFieldLacunarity,
       volumeArgs.noiseFieldGain,
-      true
+      false
     );
 
     pos += posStep;
-    density += saturate(noiseResult);
+    noiseSum += saturate(noiseResult);
   }
 
-  density /= numSubSteps;
+  noiseSum /= numSubSteps;
 
-  return saturate(density * volumeArgs.noiseFieldDensityScale) * atmosphericDensity;
+  // Remap the resulting noise value into a scalar factor applied to the typical atmospheric density
+  // Note: These "arbitrary" scaling and exponent factors allow artists a bit more control over the look of the noise field beyond the capabilities
+  // of the fractal noise function itself.
+
+  const float remappedDensity = saturate(pow(noiseSum * volumeArgs.noiseFieldDensityScale, volumeArgs.noiseFieldDensityExponent));
+
+  return remappedDensity * atmosphericDensity;
 }
 
 // Size of voxel jitter in texel space (in the XY plane only)
