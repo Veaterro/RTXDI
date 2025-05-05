@@ -69,7 +69,7 @@ bool evalNEE(
   if (volumeArgs.enable)
   {
     const float distance = min(float16Max, visibilityRay.tMax);
-    volumeAttenuation = calcAtmosphereAttenuation(volumeArgs, false, distance, lightSample.position, -visibilityRay.direction);
+    volumeAttenuation = calcAtmosphereAttenuation(volumeArgs, none, false, distance, lightSample.position, -visibilityRay.direction);
   }
   
   attenuatedRadiance = lightSample.radiance * lightThroughput * volumeAttenuation;

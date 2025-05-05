@@ -79,6 +79,9 @@ void integrateVolumetricNEE(
   
   uint2 froxelCoordinate = screenUV * volumeArgs.froxelGridDimensions;
   
+  // Todo: This code is definately wrong as it is using the same camera across all the integration iterations despite the possibility
+  // of passing into different Portal spaces (which require different volumetric cameras to translate positions into froxels properly).
+  // This issue among others in this function are filed under REMIX-4162.
   const VolumeDefinitionCamera camera = volumeArgs.cameras[froxelVolumeMain];
 
   // Set up for a portal transition
@@ -169,7 +172,14 @@ void integrateVolumetricNEE(
 
     // Sample density field, for this we should use the actual world position (not translated)
 
-    const float density = sampleDensityField(volumeArgs, previousTranslatedWorldPosition + camera.translatedWorldOffset, currentTranslatedWorldPosition + camera.translatedWorldOffset, stepSize, timeMS); 
+    const float density = sampleDensityField(
+      volumeArgs,
+      camera,
+      previousTranslatedWorldPosition + camera.translatedWorldOffset,
+      currentTranslatedWorldPosition + camera.translatedWorldOffset,
+      stepSize,
+      timeMS
+    ); 
     
     // Calculate new radiance for this marching step
     
@@ -195,10 +205,10 @@ void integrateVolumetricNEE(
   const float planeDistance = dot(targetPositionTranslated, transpose(camera.translatedWorldToView)[2].xyz);
   if (primaryMiss)
   {
-    accumulatedTransmittance = calcAtmosphereAttenuation(volumeArgs, true, 0.f, startPositionTranslated, viewDir);
+    accumulatedTransmittance = calcAtmosphereAttenuation(volumeArgs, camera, true, 0.f, startPositionTranslated, viewDir);
   }
   else if(planeDistance > volumeArgs.froxelMaxDistance)
   {
-    accumulatedTransmittance *= calcAtmosphereAttenuation(volumeArgs, false, planeDistance - volumeArgs.froxelMaxDistance, startPositionTranslated, viewDir);
+    accumulatedTransmittance *= calcAtmosphereAttenuation(volumeArgs, camera, false, planeDistance - volumeArgs.froxelMaxDistance, startPositionTranslated, viewDir);
   }
 }
