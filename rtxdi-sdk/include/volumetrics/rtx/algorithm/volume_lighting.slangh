@@ -32,6 +32,54 @@ uint portalSpaceToVolumeHint(PortalSpace2BitsType portalSpace)
   }
 }
 
+// Volumetric Attenuation Helper Functions
+
+// Evaluates the attenuation from the volumetric system (e.g. general fog, atmosphereic effects, etc) between the
+// origin and Hit Distance of a specified ray. If the infinitelyDistant flag is set, this indicates that the ray
+// should not be bounded by a Hit Distance value and is instead an infinite ray. This is typically to be used for
+// rays which miss geometry and go off into infinity or for distant light sources.
+// The origin position must be in the same translated world space as the volume camera passed in,
+// or world space if no camera is passed in.
+// The attenuation scalar may be used to scale the attenuation coefficient, typically for heterogeneous mediums.
+// Do note however this scalar applies as a constant across the entire length of the ray so small enough steps
+// must be taken to properly integrate a variable attenuation.
+float3 calcVolumetricAttenuation(
+  const VolumeArgs volumeArgs,
+  const Optional<VolumeDefinitionCamera> camera,
+  const bool infinitelyDistant, float hitDistance,
+  const float3 origin, const float3 direction,
+  const float attenuationScalar = 1.0f
+)
+{
+  // Check if volumetrics are enabled
+  // Note: This ensures light is not attenuated by the volumetric system when it's not desired.
+
+  if (!volumeArgs.enable)
+  {
+    return float3(1.0f, 1.0f, 1.0f);
+  }
+
+  // Apply attenuation based on which type of volumetrics are in use
+  // Note: Currently the atmosphere feature of the volumetrics essentially is a toggle between an infinite volumetric medium
+  // and a spherical planet atmosphere-shaped one. In the future it may be a separate effect applied on top of local
+  // fog volumes closer to the ground and the logic to calculate this attenuation will need to be more complex.
+
+  if (!volumeArgs.enableAtmosphere)
+  {
+    // Infinite Medium Attenuation
+
+    const float attenuationT = infinitelyDistant ? volumeArgs.maxAttenuationDistanceForNoAtmosphere : min(volumeArgs.maxAttenuationDistanceForNoAtmosphere, hitDistance);
+
+    return evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient * attenuationScalar, attenuationT);
+  }
+  else
+  {
+    // Planet Atmosphere Attenuation
+
+    return calcAtmosphereAttenuation(volumeArgs, camera, infinitelyDistant, hitDistance, origin, direction, attenuationScalar);
+  }
+}
+
 // Calculates the volumetric atmosphere planet center in translated world based on a specified volume camera,
 // or left in world space if none is provided.
 float3 calcPlanetCenter(const VolumeArgs volumeArgs, const Optional<VolumeDefinitionCamera> camera)
@@ -54,29 +102,6 @@ float3 calcPlanetCenter(const VolumeArgs volumeArgs, const Optional<VolumeDefini
   }
 }
 
-// Evaluates the attenuation through a given distance of the global volumetric medium.
-// The origin position must be in the same translated world space as the volume camera passed in,
-// or world space if no camera is passed in.
-float3 evalVolumetricAttenuation(
-  const VolumeArgs volumeArgs,
-  const Optional<VolumeDefinitionCamera> camera,
-  bool hasHit, float hitDistance,
-  const float3 origin, const float3 direction
-)
-{
-  // Check if the global volumetrics are enabled
-  // Note: This ensures light is not attenuated by the volumetric system when it's not desired.
-
-  if (!volumeArgs.enable)
-  {
-    return float3(1.0f, 1.0f, 1.0f);
-  }
-
-  // Calculate the global volumetric attenuation
-
-  return calcAtmosphereAttenuation(volumeArgs, camera, !hasHit, hitDistance, origin, direction);
-}
-
 // Returns true if a given position is inside the volume's atmosphere or not (regardless of if this feature is enabled).
 // The position must be in the same translated world space as the volume camera passed in, or world space if no camera
 // is passed in.
@@ -89,7 +114,7 @@ bool isInAtmosphere(
   const float3 planetCenter = calcPlanetCenter(volumeArgs, camera);
   const float3 relPos = planetCenter - position;
 
-  return dot(relPos, relPos) <= (volumeArgs.atmosphereRadius * volumeArgs.atmosphereRadius);
+  return dot(relPos, relPos) <= volumeArgs.atmosphereRadiusSquared;
 }
 
 // Calculates the percentage of a line segment below an axis-aligned plane.
@@ -108,35 +133,32 @@ float evalAtmosphericDensityBetween(
 
   const float3 planetCenter = calcPlanetCenter(volumeArgs, camera);
 
-  return lineSegmentSphereIntersectionPercentage(p1, p2, planetCenter, volumeArgs.atmosphereRadius);
+  return lineSegmentSphereIntersectionPercentage(p1, p2, planetCenter, volumeArgs.atmosphereRadiusSquared);
 }
 
 // Calculates the attenuation resulting from the volumetric system (global fog or the atmosphere) on a specified ray.
 // The ray origin must be in the same translated world space as the volume camera passed in (direction/hit t should
 // not depend on a translated world space transformation due to not involving rotations or scales) or world space if
 // no camera is passed in.
+// This function should not be called outside the volumetric system as it does not properly check if volumetrics as a
+// whole are enabled, or if the atmosphere itself is enabled. Consider using calcVolumetricAttenuation instead.
 float3 calcAtmosphereAttenuation(
   const VolumeArgs volumeArgs,
   const Optional<VolumeDefinitionCamera> camera,
   const bool infinitelyDistant, const float hitT,
-  const float3 origin, const float3 direction
+  const float3 origin, const float3 direction,
+  const float attenuationScalar = 1.0f
 )
 {
-  float attenuationT;
-  
-  if (!volumeArgs.enableAtmosphere)
-  {
-    attenuationT = infinitelyDistant ? volumeArgs.maxAttenuationDistanceForNoAtmosphere : min(volumeArgs.maxAttenuationDistanceForNoAtmosphere, hitT);
-    return evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient, attenuationT);
-  }
-
   const float3 planetCenter = calcPlanetCenter(volumeArgs, camera);
 
   float atmosphereEntryHitT, atmosphereExitHitT;
-  raySphereIntersect(origin, direction, planetCenter, volumeArgs.atmosphereRadius, atmosphereEntryHitT, atmosphereExitHitT);
-  
+  raySphereIntersect(origin, direction, planetCenter, volumeArgs.atmosphereRadiusSquared, atmosphereEntryHitT, atmosphereExitHitT);
+
   const bool inAtmosphere = atmosphereExitHitT >= 0.f && atmosphereEntryHitT < 0.f;
   const bool noAtmosphere = atmosphereEntryHitT < 0.f && atmosphereExitHitT < 0.f;
+
+  float attenuationT;
 
   if (inAtmosphere)
   {
@@ -186,7 +208,7 @@ float3 calcAtmosphereAttenuation(
     }
   }
 
-  return evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient, attenuationT);
+  return evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient * attenuationScalar, attenuationT);
 }
 
 // Calculates a volumetric density modulation factor between two points based on a configurable noise function.
@@ -248,6 +270,8 @@ float sampleDensityField(
 
   return remappedDensity * atmosphericDensity;
 }
+
+// Volumetric NEE Helper Functions
 
 // Size of voxel jitter in texel space (in the XY plane only)
 float2 calculateVolumeSamplingJitterRadius(VolumeArgs volumeArgs, float size)

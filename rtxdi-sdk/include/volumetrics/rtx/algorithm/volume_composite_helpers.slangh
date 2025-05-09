@@ -193,7 +193,7 @@ void integrateVolumetricNEE(
     const float3 outScattering = volumeArgs.scatteringCoefficient * density;
   
     preintegratedRadiance += inScattering * outScattering * accumulatedTransmittance * stepSize ;
-    accumulatedTransmittance *= evalBeerLambertAttenuation(volumeArgs.attenuationCoefficient * density, stepSize);
+    accumulatedTransmittance *= calcVolumetricAttenuation(volumeArgs, camera, false, stepSize, previousTranslatedWorldPosition, viewDir, density);
 
     // Set the previous world position
 
@@ -201,14 +201,16 @@ void integrateVolumetricNEE(
   }
   
   // Since volumetrics are only calculated for a fraction of the frustum volume, we need to calculate the remaining attenuation assuming homogonous media
+  // starting at the last translated world position the integration steps ended on (previousTranslatedWorldPosition).
   // This handles both the large hit distance case, and the miss case which do require separate solutions.
   const float planeDistance = dot(targetPositionTranslated, transpose(camera.translatedWorldToView)[2].xyz);
   if (primaryMiss)
   {
-    accumulatedTransmittance = calcAtmosphereAttenuation(volumeArgs, camera, true, 0.f, startPositionTranslated, viewDir);
+    accumulatedTransmittance = calcVolumetricAttenuation(volumeArgs, camera, true, 0.f, previousTranslatedWorldPosition, viewDir);
   }
   else if(planeDistance > volumeArgs.froxelMaxDistance)
   {
-    accumulatedTransmittance *= calcAtmosphereAttenuation(volumeArgs, camera, false, planeDistance - volumeArgs.froxelMaxDistance, startPositionTranslated, viewDir);
+    // Todo: This seems incorrect, why is the ray to evaluate attenuation here starting at the start position of the ray?
+    accumulatedTransmittance *= calcVolumetricAttenuation(volumeArgs, camera, false, planeDistance - volumeArgs.froxelMaxDistance, previousTranslatedWorldPosition, viewDir);
   }
 }
