@@ -210,7 +210,6 @@ void integrateVolumetricNEE(
   }
   else if(planeDistance > volumeArgs.froxelMaxDistance)
   {
-    // Todo: This seems incorrect, why is the ray to evaluate attenuation here starting at the start position of the ray?
     accumulatedTransmittance *= calcVolumetricAttenuation(volumeArgs, camera, false, planeDistance - volumeArgs.froxelMaxDistance, previousTranslatedWorldPosition, viewDir);
   }
 }
