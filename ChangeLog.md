@@ -1,5 +1,22 @@
 # RTXDI SDK Change Log
 
+## 2.3.0
+
+**Release highlights:**
+
+- Better folder organization: The samples now live in `Samples/`, external libraries now live in `External/`, and the test suite lives in `External/Tests/`.
+- All folders and files now use the PascalCase naming convention.
+- `RtxdiApplicationBridge.hlsli` broken down into constituent files based on functionality.
+- `DIResamplingFunctions.hlsli` and `GIResamplingFunctions.hlsli` broken down into constituent files based on functionality.
+
+**Breaking changes:**
+
+- rtxdi-runtime folder moved to Libraries/Rtxdi, which is now organized into folders based on algorithm.
+- File breakdowns mentioned above.
+
+**Misc improvements:**
+
+- Donut updated to latest version to include Blackwell support.
 
 ## 2.2.0
 
